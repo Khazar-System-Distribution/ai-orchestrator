@@ -1,0 +1,4 @@
+*.o
+ai-orchestrator
+*.sock
+/ai-orchestrator
