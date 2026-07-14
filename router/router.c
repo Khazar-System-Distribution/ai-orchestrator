@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <regex.h>
 
 #define MODULE "router"
 
@@ -23,13 +24,36 @@ router_t *router_init(registry_t *reg) {
     rt->rule_count = 0;
     pthread_mutex_init(&rt->mutex, NULL);
 
-    router_add_rule(rt, "a[cç]|open|launch|start|run", "open_application");
-    router_add_rule(rt, "ba[ghğ]la|close|kill|durdur|stop|quit", "close_application");
-    router_add_rule(rt, "qur|install|kur|y[üu]kle", "install_package");
-    router_add_rule(rt, "sil|remove|kald[ıi]r|uninstall", "remove_package");
-    router_add_rule(rt, "ara|search|find|lookup", "search_package");
-    router_add_rule(rt, "wifi|wi-fi|network", "network_management");
-    router_add_rule(rt, "bildiri[mş]|notification|notify", "notifications");
+    router_add_rule(rt, "(^|[[:space:]])ac($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])aç($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])open($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])launch($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])start($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])run($|[[:space:]])", "open_application");
+    router_add_rule(rt, "(^|[[:space:]])bagla($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])bahla($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])bağla($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])close($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])kill($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])stop($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])quit($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])durdur($|[[:space:]])", "close_application");
+    router_add_rule(rt, "(^|[[:space:]])qur($|[[:space:]])", "install_package");
+    router_add_rule(rt, "(^|[[:space:]])kur($|[[:space:]])", "install_package");
+    router_add_rule(rt, "(^|[[:space:]])install($|[[:space:]])", "install_package");
+    router_add_rule(rt, "(^|[[:space:]])yukle($|[[:space:]])", "install_package");
+    router_add_rule(rt, "(^|[[:space:]])yükle($|[[:space:]])", "install_package");
+    router_add_rule(rt, "(^|[[:space:]])sil($|[[:space:]])", "remove_package");
+    router_add_rule(rt, "(^|[[:space:]])remove($|[[:space:]])", "remove_package");
+    router_add_rule(rt, "(^|[[:space:]])kaldir($|[[:space:]])", "remove_package");
+    router_add_rule(rt, "(^|[[:space:]])kaldır($|[[:space:]])", "remove_package");
+    router_add_rule(rt, "(^|[[:space:]])ara($|[[:space:]])", "search_package");
+    router_add_rule(rt, "(^|[[:space:]])search($|[[:space:]])", "search_package");
+    router_add_rule(rt, "(^|[[:space:]])find($|[[:space:]])", "search_package");
+    router_add_rule(rt, "(^|[[:space:]])wifi($|[[:space:]])", "network_management");
+    router_add_rule(rt, "(^|[[:space:]])network($|[[:space:]])", "network_management");
+    router_add_rule(rt, "(^|[[:space:]])bildirim($|[[:space:]])", "notifications");
+    router_add_rule(rt, "(^|[[:space:]])bildiriş($|[[:space:]])", "notifications");
 
     log_info(MODULE, "router initialized with %d rules", rt->rule_count);
     return rt;
@@ -55,7 +79,20 @@ int router_add_rule(router_t *rt, const char *pattern, const char *capability) {
 
 static bool match_pattern(const char *query, const char *pattern) {
     if (!query || !pattern) return false;
-    return strstr(query, pattern) != NULL;
+
+    regex_t regex;
+    int ret = regcomp(&regex, pattern, REG_EXTENDED | REG_ICASE | REG_NOSUB);
+    if (ret != 0) {
+        char errbuf[256];
+        regerror(ret, &regex, errbuf, sizeof(errbuf));
+        log_warn(MODULE, "regex compile failed: %s -> %s", pattern, errbuf);
+        return false;
+    }
+
+    ret = regexec(&regex, query, 0, NULL, 0);
+    regfree(&regex);
+
+    return ret == 0;
 }
 
 int router_resolve(router_t *rt, const request_t *req, intent_t *intent) {
