@@ -2,29 +2,40 @@ CC      := gcc
 CFLAGS  := -Wall -Wextra -std=c11 -O2 -pthread -Wno-format-truncation
 LDFLAGS := -pthread -lm
 TARGET  := ai-orchestrator
+AGENT   := desktop-agent
 
 SRCDIR  := src
 INCDIR  := include
 
-MODULES := logger config protocol ipc registry router scheduler session metrics
+MODULES := logger config protocol ipc registry router policy scheduler session metrics
+AGENTS  := agents
 
 SRCS    := main.c \
            $(foreach m,$(MODULES),$m/$m.c)
 
 OBJS    := $(SRCS:.c=.o)
 
-.PHONY: all clean install uninstall
+AGENT_SRCS := $(AGENTS)/desktop-agent.c
+AGENT_OBJS := $(AGENT_SRCS:.c=.o)
 
-all: $(TARGET)
+.PHONY: all clean install uninstall agents
+
+all: $(TARGET) agents
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+agents: $(AGENT)
+	@true
+
+$(AGENT): $(AGENT_OBJS)
+	$(CC) $(CFLAGS) -o agents/$@ $^
 
 %.o: %.c
 	$(CC) $(CFLAGS) -I. -I$(INCDIR) -c -o $@ $<
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(AGENT_OBJS) agents/$(AGENT)
 
 install: $(TARGET)
 	install -d $(DESTDIR)/usr/local/bin
