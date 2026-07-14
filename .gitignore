@@ -2,3 +2,4 @@
 ai-orchestrator
 *.sock
 /ai-orchestrator
+llm/llm-inference
