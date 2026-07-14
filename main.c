@@ -73,14 +73,14 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
                     agent = registry_find_by_capability(g_registry, intent.required_capability);
                 }
 
-                const char *agent_name = agent ? agent->name : "unknown";
-
-                if (g_policy && policy_check(g_policy, intent.required_capability, agent_name, intent.required_capability) != 0) {
-                    protocol_build_error(req.id, ERR_POLICY_DENIED, response, sizeof(response));
-                    if (g_metrics) metrics_record_policy_denied(g_metrics);
-                    log_warn(MODULE, "policy denied: %s for %s", intent.required_capability, agent_name);
-                    ipc_send_response(client_fd, response, strlen(response));
-                    break;
+                if (agent && g_policy) {
+                    if (policy_check(g_policy, intent.required_capability, agent->name, intent.required_capability) != 0) {
+                        protocol_build_error(req.id, ERR_POLICY_DENIED, response, sizeof(response));
+                        if (g_metrics) metrics_record_policy_denied(g_metrics);
+                        log_warn(MODULE, "policy denied: %s for %s", intent.required_capability, agent->name);
+                        ipc_send_response(client_fd, response, strlen(response));
+                        break;
+                    }
                 }
 
                 if (agent) {
