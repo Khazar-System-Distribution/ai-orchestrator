@@ -5,6 +5,7 @@
 #include "ipc/ipc.h"
 #include "registry/registry.h"
 #include "router/router.h"
+#include "policy/policy.h"
 #include "scheduler/scheduler.h"
 #include "session/session.h"
 #include "metrics/metrics.h"
@@ -23,6 +24,7 @@ static config_t          *g_config = NULL;
 static ipc_server_t      *g_server = NULL;
 static registry_t        *g_registry = NULL;
 static router_t          *g_router = NULL;
+static policy_engine_t   *g_policy = NULL;
 static scheduler_t       *g_scheduler = NULL;
 static session_manager_t *g_session = NULL;
 static metrics_t         *g_metrics = NULL;
@@ -71,6 +73,16 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
                     agent = registry_find_by_capability(g_registry, intent.required_capability);
                 }
 
+                const char *agent_name = agent ? agent->name : "unknown";
+
+                if (g_policy && policy_check(g_policy, intent.required_capability, agent_name, intent.required_capability) != 0) {
+                    protocol_build_error(req.id, ERR_POLICY_DENIED, response, sizeof(response));
+                    if (g_metrics) metrics_record_policy_denied(g_metrics);
+                    log_warn(MODULE, "policy denied: %s for %s", intent.required_capability, agent_name);
+                    ipc_send_response(client_fd, response, strlen(response));
+                    break;
+                }
+
                 if (agent) {
                     snprintf(response, sizeof(response),
                         "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"routed to %s\",\"agent\":\"%s\"}}",
@@ -100,9 +112,71 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
         }
 
         case MSG_REGISTER: {
-            protocol_build_response(
-                &(response_t){.id = 0, .status = STATUS_SUCCESS, .payload = "agent registration endpoint"},
-                response, sizeof(response));
+            agent_info_t agent;
+            memset(&agent, 0, sizeof(agent));
+
+            const char *name_p = strstr(data, "\"name\"");
+            if (name_p) {
+                name_p = strchr(name_p, ':');
+                if (name_p) {
+                    while (*name_p && *name_p != '"') name_p++;
+                    if (*name_p == '"') {
+                        name_p++;
+                        int i = 0;
+                        while (*name_p && *name_p != '"' && i < MAX_NAME_LEN - 1)
+                            agent.name[i++] = *name_p++;
+                    }
+                }
+            }
+
+            const char *ver_p = strstr(data, "\"version\"");
+            if (ver_p) {
+                ver_p = strchr(ver_p, ':');
+                if (ver_p) {
+                    while (*ver_p && *ver_p != '"') ver_p++;
+                    if (*ver_p == '"') {
+                        ver_p++;
+                        int i = 0;
+                        while (*ver_p && *ver_p != '"' && i < 15)
+                            agent.version[i++] = *ver_p++;
+                    }
+                }
+            }
+
+            const char *caps_p = strstr(data, "\"capabilities\"");
+            if (caps_p) {
+                caps_p = strchr(caps_p, '[');
+                if (caps_p) {
+                    caps_p++;
+                    while (*caps_p && *caps_p != ']' && agent.cap_count < MAX_CAPABILITIES) {
+                        while (*caps_p && *caps_p != '"') caps_p++;
+                        if (*caps_p == '"') {
+                            caps_p++;
+                            int i = 0;
+                            while (*caps_p && *caps_p != '"' && i < MAX_NAME_LEN - 1)
+                                agent.capabilities[agent.cap_count][i++] = *caps_p++;
+                            agent.cap_count++;
+                            if (*caps_p) caps_p++;
+                        }
+                        while (*caps_p && *caps_p != ',' && *caps_p != ']') caps_p++;
+                        if (*caps_p == ',') caps_p++;
+                    }
+                }
+            }
+
+            agent.alive = true;
+            agent.last_heartbeat = time(NULL);
+
+            if (agent.name[0]) {
+                registry_register(g_registry, &agent);
+                snprintf(response, sizeof(response),
+                    "{\"status\":\"success\",\"payload\":{\"message\":\"agent %s registered\"}}",
+                    agent.name);
+            } else {
+                snprintf(response, sizeof(response),
+                    "{\"status\":\"error\",\"error_code\":\"INVALID_REGISTRATION\"}");
+            }
+
             ipc_send_response(client_fd, response, strlen(response));
             break;
         }
@@ -134,6 +208,7 @@ int main(int argc, char *argv[]) {
 
     g_metrics = metrics_init(cfg.enable_metrics);
     g_registry = registry_init();
+    g_policy = policy_init();
     g_router = router_init(g_registry);
     g_session = session_init(MAX_SESSIONS, SESSION_TIMEOUT);
     g_scheduler = scheduler_init(cfg.worker_threads, cfg.request_timeout_ms);
@@ -159,6 +234,7 @@ int main(int argc, char *argv[]) {
     scheduler_cleanup(g_scheduler);
     session_cleanup(g_session);
     router_cleanup(g_router);
+    policy_cleanup(g_policy);
     registry_cleanup(g_registry);
     metrics_cleanup(g_metrics);
     logger_cleanup();
