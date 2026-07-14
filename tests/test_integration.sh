@@ -19,7 +19,6 @@ socket_path = "$SOCKET"
 max_connections = 256
 request_timeout_ms = 3000
 enable_metrics = true
-worker_threads = 4
 log_level = "ERROR"
 EOF
 

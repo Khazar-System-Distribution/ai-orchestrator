@@ -11,7 +11,6 @@
 #define MAX_MESSAGE_SIZE    65536
 #define MAX_AGENTS          64
 #define MAX_SESSIONS        1024
-#define MAX_WORKER_THREADS  4
 #define SOCKET_PATH_DEFAULT "/run/ai-orchestrator.sock"
 #define REQUEST_TIMEOUT_MS  3000
 #define SOCKET_PERMISSIONS  0660

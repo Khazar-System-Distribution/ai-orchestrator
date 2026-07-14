@@ -13,7 +13,6 @@ int config_load(const char *path, config_t *cfg) {
     cfg->max_connections = MAX_CONNECTIONS;
     cfg->request_timeout_ms = REQUEST_TIMEOUT_MS;
     cfg->enable_metrics = true;
-    cfg->worker_threads = MAX_WORKER_THREADS;
     cfg->log_level = LOG_INFO;
     cfg->log_file[0] = '\0';
 
@@ -59,8 +58,6 @@ int config_load(const char *path, config_t *cfg) {
             cfg->request_timeout_ms = atoi(val);
         } else if (strcmp(key, "enable_metrics") == 0) {
             cfg->enable_metrics = strcmp(val, "true") == 0;
-        } else if (strcmp(key, "worker_threads") == 0) {
-            cfg->worker_threads = atoi(val);
         } else if (strcmp(key, "log_level") == 0) {
             if (strcmp(val, "TRACE") == 0) cfg->log_level = LOG_TRACE;
             else if (strcmp(val, "DEBUG") == 0) cfg->log_level = LOG_DEBUG;
@@ -84,5 +81,4 @@ void config_print(const config_t *cfg) {
     log_info(MODULE, "max_connections: %d", cfg->max_connections);
     log_info(MODULE, "request_timeout_ms: %d", cfg->request_timeout_ms);
     log_info(MODULE, "enable_metrics: %s", cfg->enable_metrics ? "true" : "false");
-    log_info(MODULE, "worker_threads: %d", cfg->worker_threads);
 }

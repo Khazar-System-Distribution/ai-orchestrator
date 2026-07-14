@@ -8,7 +8,6 @@ typedef struct {
     int      max_connections;
     int      request_timeout_ms;
     bool     enable_metrics;
-    int      worker_threads;
     log_level_t log_level;
     char     log_file[256];
 } config_t;
