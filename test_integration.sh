@@ -27,10 +27,19 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$TMPDIR"
 
-# --- sock_send: Unix soketine JSON gonder, cavab al ---
+# --- sock_send: Unix soketine JSON gonder, cavab al (retry ile) ---
 sock_send() {
     local sock="$1" msg="$2"
-    echo "$msg" | nc -U -w 2 "$sock" 2>/dev/null || echo "TIMEOUT"
+    local resp
+    for i in 1 2 3; do
+        resp=$(echo "$msg" | nc -U -w 3 "$sock" 2>/dev/null)
+        if [ -n "$resp" ] && [ "$resp" != "TIMEOUT" ]; then
+            echo "$resp"
+            return 0
+        fi
+        sleep 0.3
+    done
+    echo "TIMEOUT"
 }
 
 # --- Config fayllari ---
@@ -116,6 +125,7 @@ run_test() {
         echo "        response: ${resp:0:120}"
         FAIL=$((FAIL + 1))
     fi
+    sleep 0.15
 }
 
 ping_test() {
