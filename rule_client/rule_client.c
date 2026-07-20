@@ -11,7 +11,7 @@
 
 #define MODULE "rule_client"
 #define RULE_SOCK_DEFAULT "/run/ai-rule-engine.sock"
-#define QUERY_TIMEOUT_SEC 2
+#define QUERY_TIMEOUT_SEC 5
 
 struct rule_client {
     char        socket_path[256];
