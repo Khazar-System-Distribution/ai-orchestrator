@@ -7,6 +7,7 @@
 #include "router/router.h"
 #include "session/session.h"
 #include "metrics/metrics.h"
+#include "rule_client/rule_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,7 @@ static registry_t        *g_registry = NULL;
 static router_t          *g_router = NULL;
 static session_manager_t *g_session = NULL;
 static metrics_t         *g_metrics = NULL;
+static rule_client_t     *g_rule_client = NULL;
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -57,9 +59,25 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
             log_info(MODULE, "request received: %s", req.query);
 
             intent_t intent;
-            if (g_router && router_resolve(g_router, &req, &intent) == 0) {
-                log_info(MODULE, "resolved: capability=%s", intent.required_capability);
+            int resolved = 0;
 
+            /* Tier 0: try rule engine first */
+            if (g_rule_client) {
+                float confidence = 0.0f;
+                if (rule_client_query(g_rule_client, req.query, &intent, &confidence) == 0) {
+                    log_info(MODULE, "rule-engine resolved: %s (%.2f)",
+                             intent.required_capability, confidence);
+                    resolved = 1;
+                }
+            }
+
+            /* Fallback: local keyword router */
+            if (!resolved && g_router && router_resolve(g_router, &req, &intent) == 0) {
+                log_info(MODULE, "local router resolved: %s", intent.required_capability);
+                resolved = 1;
+            }
+
+            if (resolved) {
                 agent_info_t *agent = NULL;
                 if (g_registry) {
                     agent = registry_find_by_capability(g_registry, intent.required_capability);
@@ -67,21 +85,21 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 
                 if (agent) {
                     snprintf(response, sizeof(response),
-                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"routed to %s\",\"agent\":\"%s\"}}",
-                        (unsigned long long)req.id, intent.required_capability, agent->name);
+                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"routed to %s\",\"agent\":\"%s\",\"target\":\"%s\"}}",
+                        (unsigned long long)req.id, intent.required_capability, agent->name, intent.target);
                 } else {
                     snprintf(response, sizeof(response),
-                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"no agent for %s\"}}",
-                        (unsigned long long)req.id, intent.required_capability);
+                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"intent found: %s\",\"target\":\"%s\"}}",
+                        (unsigned long long)req.id, intent.required_capability, intent.target);
                 }
             } else {
                 snprintf(response, sizeof(response),
-                    "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"query received\"}}",
+                    "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"query received, no intent matched\"}}",
                     (unsigned long long)req.id);
             }
 
             if (g_metrics) {
-                metrics_record_request(g_metrics, 0, true);
+                metrics_record_request(g_metrics, 0, resolved);
             }
 
             ipc_send_response(client_fd, response, strlen(response));
@@ -167,6 +185,7 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 
 static void cleanup(void) {
     ipc_cleanup(g_server);
+    rule_client_cleanup(g_rule_client);
     session_cleanup(g_session);
     router_cleanup(g_router);
     registry_cleanup(g_registry);
@@ -191,6 +210,7 @@ int main(int argc, char *argv[]) {
     g_registry = registry_init();
     g_router = router_init(g_registry);
     g_session = session_init(MAX_SESSIONS, SESSION_TIMEOUT);
+    g_rule_client = rule_client_init(cfg.rule_engine_socket);
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
