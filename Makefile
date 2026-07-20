@@ -5,7 +5,7 @@ TARGET  := ai-orchestrator
 
 INCDIR  := include
 
-MODULES := logger config protocol ipc registry router session metrics
+MODULES := logger config protocol ipc registry router session metrics rule_client
 SRCS    := main.c $(foreach m,$(MODULES),$m/$m.c)
 OBJS    := $(SRCS:.c=.o)
 
