@@ -10,6 +10,7 @@ typedef struct {
     bool     enable_metrics;
     log_level_t log_level;
     char     log_file[256];
+    char     rule_engine_socket[256];
 } config_t;
 
 int  config_load(const char *path, config_t *cfg);
