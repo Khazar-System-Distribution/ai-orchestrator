@@ -15,6 +15,7 @@ int config_load(const char *path, config_t *cfg) {
     cfg->enable_metrics = true;
     cfg->log_level = LOG_INFO;
     cfg->log_file[0] = '\0';
+    strncpy(cfg->rule_engine_socket, "/run/ai-rule-engine.sock", sizeof(cfg->rule_engine_socket) - 1);
 
     if (!path)
         return 0;
@@ -68,6 +69,9 @@ int config_load(const char *path, config_t *cfg) {
         } else if (strcmp(key, "log_file") == 0 && val[0] == '"') {
             char *end = strrchr(val + 1, '"');
             if (end) { *end = '\0'; strncpy(cfg->log_file, val + 1, sizeof(cfg->log_file) - 1); }
+        } else if (strcmp(key, "rule_engine_socket") == 0 && val[0] == '"') {
+            char *end = strrchr(val + 1, '"');
+            if (end) { *end = '\0'; strncpy(cfg->rule_engine_socket, val + 1, sizeof(cfg->rule_engine_socket) - 1); }
         }
     }
 
@@ -81,4 +85,5 @@ void config_print(const config_t *cfg) {
     log_info(MODULE, "max_connections: %d", cfg->max_connections);
     log_info(MODULE, "request_timeout_ms: %d", cfg->request_timeout_ms);
     log_info(MODULE, "enable_metrics: %s", cfg->enable_metrics ? "true" : "false");
+    log_info(MODULE, "rule_engine_socket: %s", cfg->rule_engine_socket);
 }
