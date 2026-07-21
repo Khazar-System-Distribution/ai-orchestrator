@@ -17,6 +17,7 @@ int config_load(const char *path, config_t *cfg) {
     cfg->log_file[0] = '\0';
     strncpy(cfg->rule_engine_socket, "/run/ai-rule-engine.sock", sizeof(cfg->rule_engine_socket) - 1);
     strncpy(cfg->policy_engine_socket, "/run/ai-policy-engine.sock", sizeof(cfg->policy_engine_socket) - 1);
+    strncpy(cfg->classifier_socket, "/run/ai-intent-classifier.sock", sizeof(cfg->classifier_socket) - 1);
 
     if (!path)
         return 0;

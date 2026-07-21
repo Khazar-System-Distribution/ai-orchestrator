@@ -12,6 +12,7 @@ typedef struct {
     char     log_file[256];
     char     rule_engine_socket[256];
     char     policy_engine_socket[256];
+    char     classifier_socket[256];
 } config_t;
 
 int  config_load(const char *path, config_t *cfg);

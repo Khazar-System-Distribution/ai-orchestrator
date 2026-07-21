@@ -6,7 +6,7 @@ TARGET  := ai-orchestrator
 
 INCDIR  := include
 
-MODULES := config protocol registry router session metrics rule_client policy_client agent_client
+MODULES := config protocol registry router session metrics rule_client policy_client agent_client intent_client
 SRCS    := main.c $(foreach m,$(MODULES),$m/$m.c)
 OBJS    := $(SRCS:.c=.o)
 

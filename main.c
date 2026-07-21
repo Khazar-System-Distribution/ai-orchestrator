@@ -10,6 +10,7 @@
 #include "rule_client/rule_client.h"
 #include "policy_client/policy_client.h"
 #include "agent_client/agent_client.h"
+#include "intent_client/intent_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,7 @@ static metrics_t         *g_metrics = NULL;
 static rule_client_t     *g_rule_client = NULL;
 static policy_client_t   *g_policy_client = NULL;
 static agent_client_t    *g_agent_client = NULL;
+static intent_client_t   *g_intent_client = NULL;
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -73,22 +75,34 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 
             log_info(MODULE, "request: %s", req.query);
 
-            /* 1. Intent resolution: Rule Engine → local router */
+            /* 1. Intent resolution: Rule Engine → local router → classifier */
             intent_t intent;
             memset(&intent, 0, sizeof(intent));
             int resolved = 0;
+            float confidence = 0.0f;
 
+            /* Tier 0: Rule Engine */
             if (g_rule_client) {
-                float confidence = 0.0f;
                 if (rule_client_query(g_rule_client, req.query, &intent, &confidence) == 0) {
-                    log_info(MODULE, "rule-engine: %s (%.2f)", intent.required_capability, confidence);
+                    log_info(MODULE, "Tier 0: %s (%.2f)", intent.required_capability, confidence);
                     resolved = 1;
                 }
             }
 
+            /* Tier 0 fallback: local keyword router */
             if (!resolved && g_router && router_resolve(g_router, &req, &intent) == 0) {
                 log_info(MODULE, "local router: %s", intent.required_capability);
                 resolved = 1;
+            }
+
+            /* Tier 1: LLM classifier (for UNKNOWN queries) */
+            if (!resolved && g_intent_client) {
+                float tier1_conf = 0.0f;
+                if (intent_client_classify(g_intent_client, req.query, &intent, &tier1_conf) == 0) {
+                    log_info(MODULE, "Tier 1: %s (%.2f)", intent.required_capability, tier1_conf);
+                    resolved = 1;
+                    confidence = tier1_conf;
+                }
             }
 
             if (!resolved) {
@@ -256,6 +270,7 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 static void cleanup(void) {
     ipc_server_cleanup(g_server);
     agent_client_cleanup(g_agent_client);
+    intent_client_cleanup(g_intent_client);
     policy_client_cleanup(g_policy_client);
     rule_client_cleanup(g_rule_client);
     session_cleanup(g_session);
@@ -285,6 +300,7 @@ int main(int argc, char *argv[]) {
     g_rule_client = rule_client_init(cfg.rule_engine_socket);
     g_policy_client = policy_client_init(cfg.policy_engine_socket);
     g_agent_client = agent_client_init();
+    g_intent_client = intent_client_init(NULL);
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -295,7 +311,7 @@ int main(int argc, char *argv[]) {
     }
 
     log_info(MODULE, "AI Orchestrator v0.2 ready");
-    log_info(MODULE, "pipeline: request → rule-engine → policy-engine → agent");
+    log_info(MODULE, "pipeline: request → rule-engine → intent-classifier → policy-engine → agent");
     log_info(MODULE, "listening on %s", cfg.socket_path);
 
     ipc_server_start(g_server, on_request_handler, NULL);
