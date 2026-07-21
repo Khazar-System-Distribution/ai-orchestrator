@@ -4,13 +4,6 @@
 #include "../include/common.h"
 #include "../registry/registry.h"
 
-typedef struct {
-    char action[64];
-    char target[128];
-    char required_capability[64];
-    char parameters[MAX_MESSAGE_SIZE];
-} intent_t;
-
 typedef struct router router_t;
 
 router_t *router_init(registry_t *reg);

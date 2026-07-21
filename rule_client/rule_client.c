@@ -1,5 +1,5 @@
 #include "rule_client.h"
-#include "../logger/logger.h"
+#include <ai-sdk/logger.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

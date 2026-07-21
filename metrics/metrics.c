@@ -1,5 +1,5 @@
 #include "metrics.h"
-#include "../logger/logger.h"
+#include <ai-sdk/logger.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>

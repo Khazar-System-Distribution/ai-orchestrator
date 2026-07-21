@@ -1,11 +1,12 @@
 CC      := gcc
-CFLAGS  := -Wall -Wextra -std=c11 -O2 -pthread -Wno-format-truncation
-LDFLAGS := -pthread -lm
+SDKDIR  := $(HOME)/.local
+CFLAGS  := -Wall -Wextra -std=c11 -O2 -pthread -Wno-format-truncation -I$(SDKDIR)/include
+LDFLAGS := -pthread -lm -L$(SDKDIR)/lib -lai-sdk
 TARGET  := ai-orchestrator
 
 INCDIR  := include
 
-MODULES := logger config protocol ipc registry router session metrics rule_client
+MODULES := config protocol registry router session metrics rule_client
 SRCS    := main.c $(foreach m,$(MODULES),$m/$m.c)
 OBJS    := $(SRCS:.c=.o)
 

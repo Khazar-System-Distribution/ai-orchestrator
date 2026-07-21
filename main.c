@@ -1,8 +1,8 @@
 #include "include/common.h"
-#include "logger/logger.h"
+#include <ai-sdk/logger.h>
 #include "config/config.h"
 #include "protocol/protocol.h"
-#include "ipc/ipc.h"
+#include <ai-sdk/ipc.h>
 #include "registry/registry.h"
 #include "router/router.h"
 #include "session/session.h"
@@ -31,7 +31,7 @@ static void handle_signal(int sig) {
     (void)sig;
     log_info(MODULE, "signal received, shutting down...");
     running = false;
-    if (g_server) ipc_stop(g_server);
+    if (g_server) ipc_server_stop(g_server);
 }
 
 static void on_request_handler(int client_fd, const char *data, size_t len, void *ctx) {
@@ -43,14 +43,14 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 
     if (protocol_parse(data, len, &type, &req) < 0) {
         protocol_build_error(0, ERR_INVALID_REQUEST, response, sizeof(response));
-        ipc_send_response(client_fd, response, strlen(response));
+        ipc_server_send(client_fd, response, strlen(response));
         return;
     }
 
     switch (type) {
         case MSG_PING: {
             protocol_build_ping_response(response, sizeof(response));
-            ipc_send_response(client_fd, response, strlen(response));
+            ipc_server_send(client_fd, response, strlen(response));
             log_debug(MODULE, "ping response sent");
             break;
         }
@@ -102,7 +102,7 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
                 metrics_record_request(g_metrics, 0, resolved);
             }
 
-            ipc_send_response(client_fd, response, strlen(response));
+            ipc_server_send(client_fd, response, strlen(response));
             break;
         }
 
@@ -172,19 +172,19 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
                     "{\"status\":\"error\",\"error_code\":\"INVALID_REGISTRATION\"}");
             }
 
-            ipc_send_response(client_fd, response, strlen(response));
+            ipc_server_send(client_fd, response, strlen(response));
             break;
         }
 
         default:
             protocol_build_error(0, ERR_INVALID_REQUEST, response, sizeof(response));
-            ipc_send_response(client_fd, response, strlen(response));
+            ipc_server_send(client_fd, response, strlen(response));
             break;
     }
 }
 
 static void cleanup(void) {
-    ipc_cleanup(g_server);
+    ipc_server_cleanup(g_server);
     rule_client_cleanup(g_rule_client);
     session_cleanup(g_session);
     router_cleanup(g_router);
@@ -197,7 +197,7 @@ int main(int argc, char *argv[]) {
     const char *config_path = NULL;
     if (argc > 1) config_path = argv[1];
 
-    logger_init(LOG_INFO);
+    logger_init(NULL, LOG_INFO);
     log_info(MODULE, "AI Orchestrator v0.1 starting...");
 
     config_t cfg;
@@ -215,7 +215,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
 
-    g_server = ipc_init(cfg.socket_path, cfg.max_connections);
+    g_server = ipc_server_init(cfg.socket_path, cfg.max_connections);
     if (!g_server) {
         log_fatal(MODULE, "failed to initialize IPC server");
     }
@@ -223,7 +223,7 @@ int main(int argc, char *argv[]) {
     log_info(MODULE, "AI Orchestrator v0.1 ready");
     log_info(MODULE, "listening on %s", cfg.socket_path);
 
-    ipc_start(g_server, on_request_handler, NULL);
+    ipc_server_start(g_server, on_request_handler, NULL);
 
     log_info(MODULE, "shutting down...");
     cleanup();

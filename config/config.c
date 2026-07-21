@@ -1,5 +1,5 @@
 #include "config.h"
-#include "../logger/logger.h"
+#include <ai-sdk/logger.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -9,7 +9,7 @@
 int config_load(const char *path, config_t *cfg) {
     memset(cfg, 0, sizeof(config_t));
 
-    strncpy(cfg->socket_path, SOCKET_PATH_DEFAULT, sizeof(cfg->socket_path) - 1);
+    strncpy(cfg->socket_path, DEFAULT_ORCHESTRATOR_SOCKET, sizeof(cfg->socket_path) - 1);
     cfg->max_connections = MAX_CONNECTIONS;
     cfg->request_timeout_ms = REQUEST_TIMEOUT_MS;
     cfg->enable_metrics = true;

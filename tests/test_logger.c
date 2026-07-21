@@ -1,4 +1,4 @@
-#include "../logger/logger.h"
+#include <ai-sdk/logger.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
