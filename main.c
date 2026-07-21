@@ -8,6 +8,8 @@
 #include "session/session.h"
 #include "metrics/metrics.h"
 #include "rule_client/rule_client.h"
+#include "policy_client/policy_client.h"
+#include "agent_client/agent_client.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +28,8 @@ static router_t          *g_router = NULL;
 static session_manager_t *g_session = NULL;
 static metrics_t         *g_metrics = NULL;
 static rule_client_t     *g_rule_client = NULL;
+static policy_client_t   *g_policy_client = NULL;
+static agent_client_t    *g_agent_client = NULL;
 
 static void handle_signal(int sig) {
     (void)sig;
@@ -34,75 +38,117 @@ static void handle_signal(int sig) {
     if (g_server) ipc_server_stop(g_server);
 }
 
+static void send_response(int fd, response_t *resp, char *buf, size_t bufsz) {
+    protocol_build_response(resp, buf, bufsz);
+    ipc_server_send(fd, buf, strlen(buf));
+}
+
 static void on_request_handler(int client_fd, const char *data, size_t len, void *ctx) {
     (void)ctx;
 
     message_type_t type;
     request_t req;
-    char response[512];
+    response_t resp;
+    char out_buf[MAX_MESSAGE_SIZE];
+
+    memset(&req, 0, sizeof(req));
+    memset(&resp, 0, sizeof(resp));
 
     if (protocol_parse(data, len, &type, &req) < 0) {
-        protocol_build_error(0, ERR_INVALID_REQUEST, response, sizeof(response));
-        ipc_server_send(client_fd, response, strlen(response));
+        resp.id = 0;
+        resp.status = STATUS_ERROR;
+        resp.error_code = ERR_INVALID_REQUEST;
+        snprintf(resp.payload, sizeof(resp.payload), "invalid message format");
+        send_response(client_fd, &resp, out_buf, sizeof(out_buf));
         return;
     }
 
     switch (type) {
-        case MSG_PING: {
-            protocol_build_ping_response(response, sizeof(response));
-            ipc_server_send(client_fd, response, strlen(response));
-            log_debug(MODULE, "ping response sent");
+        case MSG_PING:
+            ipc_server_send(client_fd, "{\"status\":\"alive\"}", 17);
             break;
-        }
 
         case MSG_REQUEST: {
-            log_info(MODULE, "request received: %s", req.query);
+            resp.id = req.id;
 
+            log_info(MODULE, "request: %s", req.query);
+
+            /* 1. Intent resolution: Rule Engine → local router */
             intent_t intent;
+            memset(&intent, 0, sizeof(intent));
             int resolved = 0;
 
-            /* Tier 0: try rule engine first */
             if (g_rule_client) {
                 float confidence = 0.0f;
                 if (rule_client_query(g_rule_client, req.query, &intent, &confidence) == 0) {
-                    log_info(MODULE, "rule-engine resolved: %s (%.2f)",
-                             intent.required_capability, confidence);
+                    log_info(MODULE, "rule-engine: %s (%.2f)", intent.required_capability, confidence);
                     resolved = 1;
                 }
             }
 
-            /* Fallback: local keyword router */
             if (!resolved && g_router && router_resolve(g_router, &req, &intent) == 0) {
-                log_info(MODULE, "local router resolved: %s", intent.required_capability);
+                log_info(MODULE, "local router: %s", intent.required_capability);
                 resolved = 1;
             }
 
-            if (resolved) {
-                agent_info_t *agent = NULL;
-                if (g_registry) {
-                    agent = registry_find_by_capability(g_registry, intent.required_capability);
-                }
+            if (!resolved) {
+                resp.status = STATUS_SUCCESS;
+                snprintf(resp.payload, sizeof(resp.payload), "no intent matched for query");
+                send_response(client_fd, &resp, out_buf, sizeof(out_buf));
+                break;
+            }
 
-                if (agent) {
-                    snprintf(response, sizeof(response),
-                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"routed to %s\",\"agent\":\"%s\",\"target\":\"%s\"}}",
-                        (unsigned long long)req.id, intent.required_capability, agent->name, intent.target);
+            /* 2. Find agent by capability */
+            agent_info_t *agent = registry_find_by_capability(g_registry, intent.required_capability);
+            if (!agent) {
+                resp.status = STATUS_ERROR;
+                resp.error_code = ERR_AGENT_UNAVAILABLE;
+                snprintf(resp.payload, sizeof(resp.payload),
+                         "no agent for capability '%s'", intent.required_capability);
+                log_warn(MODULE, "%s", resp.payload);
+                send_response(client_fd, &resp, out_buf, sizeof(out_buf));
+                break;
+            }
+
+            log_info(MODULE, "agent found: %s (%s)", agent->name, agent->socket_path);
+
+            /* 3. Policy check */
+            bool allowed = false;
+            char policy_reason[256] = {0};
+            if (g_policy_client) {
+                if (policy_client_check(g_policy_client, agent->name,
+                                        intent.required_capability, intent.target,
+                                        &allowed, policy_reason, sizeof(policy_reason)) == 0) {
+                    if (!allowed) {
+                        resp.status = STATUS_ERROR;
+                        resp.error_code = ERR_POLICY_DENIED;
+                        snprintf(resp.payload, sizeof(resp.payload), "policy denied: %s",
+                                 policy_reason[0] ? policy_reason : "action not permitted");
+                        log_warn(MODULE, "POLICY DENIED: agent=%s cap=%s reason=%s",
+                                 agent->name, intent.required_capability, policy_reason);
+                        send_response(client_fd, &resp, out_buf, sizeof(out_buf));
+                        break;
+                    }
+                    log_info(MODULE, "POLICY ALLOW: agent=%s cap=%s", agent->name, intent.required_capability);
                 } else {
-                    snprintf(response, sizeof(response),
-                        "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"intent found: %s\",\"target\":\"%s\"}}",
-                        (unsigned long long)req.id, intent.required_capability, intent.target);
+                    log_warn(MODULE, "policy engine unreachable, proceeding anyway");
                 }
+            }
+
+            /* 4. Dispatch to agent */
+            if (g_agent_client) {
+                agent_client_dispatch(g_agent_client, agent, &req, &resp);
             } else {
-                snprintf(response, sizeof(response),
-                    "{\"id\":%llu,\"status\":\"success\",\"payload\":{\"message\":\"query received, no intent matched\"}}",
-                    (unsigned long long)req.id);
+                resp.status = STATUS_SUCCESS;
+                snprintf(resp.payload, sizeof(resp.payload),
+                         "routed to %s (no agent client)", agent->name);
             }
 
             if (g_metrics) {
                 metrics_record_request(g_metrics, 0, resolved);
             }
 
-            ipc_server_send(client_fd, response, strlen(response));
+            send_response(client_fd, &resp, out_buf, sizeof(out_buf));
             break;
         }
 
@@ -138,6 +184,21 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
                 }
             }
 
+            const char *sock_p = strstr(data, "\"socket\"");
+            if (!sock_p) sock_p = strstr(data, "\"socket_path\"");
+            if (sock_p) {
+                sock_p = strchr(sock_p, ':');
+                if (sock_p) {
+                    while (*sock_p && *sock_p != '"') sock_p++;
+                    if (*sock_p == '"') {
+                        sock_p++;
+                        int i = 0;
+                        while (*sock_p && *sock_p != '"' && i < MAX_SOCKET_LEN - 1)
+                            agent.socket_path[i++] = *sock_p++;
+                    }
+                }
+            }
+
             const char *caps_p = strstr(data, "\"capabilities\"");
             if (caps_p) {
                 caps_p = strchr(caps_p, '[');
@@ -164,27 +225,38 @@ static void on_request_handler(int client_fd, const char *data, size_t len, void
 
             if (agent.name[0]) {
                 registry_register(g_registry, &agent);
-                snprintf(response, sizeof(response),
-                    "{\"status\":\"success\",\"payload\":{\"message\":\"agent %s registered\"}}",
-                    agent.name);
+                resp.id = 0;
+                resp.status = STATUS_SUCCESS;
+                snprintf(resp.payload, sizeof(resp.payload),
+                         "agent %s registered (cap: %d, sock: %s)",
+                         agent.name, agent.cap_count, agent.socket_path);
+                log_info(MODULE, "agent registered: %s v%s sock=%s caps=%d",
+                         agent.name, agent.version, agent.socket_path, agent.cap_count);
             } else {
-                snprintf(response, sizeof(response),
-                    "{\"status\":\"error\",\"error_code\":\"INVALID_REGISTRATION\"}");
+                resp.id = 0;
+                resp.status = STATUS_ERROR;
+                resp.error_code = ERR_INVALID_REQUEST;
+                snprintf(resp.payload, sizeof(resp.payload), "invalid registration");
             }
 
-            ipc_server_send(client_fd, response, strlen(response));
+            send_response(client_fd, &resp, out_buf, sizeof(out_buf));
             break;
         }
 
         default:
-            protocol_build_error(0, ERR_INVALID_REQUEST, response, sizeof(response));
-            ipc_server_send(client_fd, response, strlen(response));
+            resp.id = 0;
+            resp.status = STATUS_ERROR;
+            resp.error_code = ERR_INVALID_REQUEST;
+            snprintf(resp.payload, sizeof(resp.payload), "unknown message type");
+            send_response(client_fd, &resp, out_buf, sizeof(out_buf));
             break;
     }
 }
 
 static void cleanup(void) {
     ipc_server_cleanup(g_server);
+    agent_client_cleanup(g_agent_client);
+    policy_client_cleanup(g_policy_client);
     rule_client_cleanup(g_rule_client);
     session_cleanup(g_session);
     router_cleanup(g_router);
@@ -198,7 +270,7 @@ int main(int argc, char *argv[]) {
     if (argc > 1) config_path = argv[1];
 
     logger_init(NULL, LOG_INFO);
-    log_info(MODULE, "AI Orchestrator v0.1 starting...");
+    log_info(MODULE, "AI Orchestrator v0.2 starting...");
 
     config_t cfg;
     config_load(config_path, &cfg);
@@ -211,6 +283,8 @@ int main(int argc, char *argv[]) {
     g_router = router_init(g_registry);
     g_session = session_init(MAX_SESSIONS, SESSION_TIMEOUT);
     g_rule_client = rule_client_init(cfg.rule_engine_socket);
+    g_policy_client = policy_client_init(cfg.policy_engine_socket);
+    g_agent_client = agent_client_init();
 
     signal(SIGINT, handle_signal);
     signal(SIGTERM, handle_signal);
@@ -220,7 +294,8 @@ int main(int argc, char *argv[]) {
         log_fatal(MODULE, "failed to initialize IPC server");
     }
 
-    log_info(MODULE, "AI Orchestrator v0.1 ready");
+    log_info(MODULE, "AI Orchestrator v0.2 ready");
+    log_info(MODULE, "pipeline: request → rule-engine → policy-engine → agent");
     log_info(MODULE, "listening on %s", cfg.socket_path);
 
     ipc_server_start(g_server, on_request_handler, NULL);
